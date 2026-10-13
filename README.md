@@ -78,7 +78,7 @@ outer `run()`) would let the adapter drop backtrace inspection and make `Loop::s
   `React\Async\await()` created earlier in the same process: the nested stop ends that scheduler's `Loop::run()`.
   Mix the two styles in one process only if foreign fibers are not used after a `{main}` await (the tests for the
   in-place path run in separate processes for this reason).
-- A local `fclose()` of a stream that fibers wait on is noticed by a 10 ms periodic sweep that exists only while stream waits are pending; the waits return normally within ~10 ms and the next operation on the closed resource fails.
+- A local `fclose()` of a stream that fibers wait on wakes the waiters within ~20 ms (the next operation on the closed resource fails). A periodic timer (20 ms) runs `is_resource()` on the watched streams; it exists only while stream waits are pending. If the stream is closed inside a callback and `StreamSelectLoop` selects before the timer fires, `stream_select()` fails with `TypeError` ("supplied resource is not a valid stream resource", or `ValueError` "No stream arrays were passed" when it was the only stream); `ActivatingLoop::run()` catches exactly that, removes the dead watchers via `removeReadStream()`/`removeWriteStream()` (which still key by `(int)$stream` after close), wakes the waiters and runs the loop again. No work is done per callback.
 - No cancellation of `go()` tasks beyond what `React\Promise` `cancel()` gives.
 - Foreign fibers started inside a loop callback cannot wait (see above).
 

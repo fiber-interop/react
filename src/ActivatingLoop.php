@@ -18,8 +18,13 @@ final class ActivatingLoop implements LoopInterface
 
     public function __construct(private readonly LoopInterface $inner) {}
 
-    /** @internal */
-    public static ?\Closure $afterCallback = null;
+    /**
+     * Set by the adapter while stream waits are pending. Called only when stream_select() met a closed resource
+     * (TypeError/ValueError out of the loop): removes the dead watchers and wakes their waiters.
+     * Returns whether the failure was that one, so the loop can be run again.
+     * @internal
+     */
+    public static ?\Closure $recover = null;
 
     public static function activate(): void
     {
@@ -32,15 +37,7 @@ final class ActivatingLoop implements LoopInterface
     {
         return static function (mixed ...$args) use ($f): mixed {
             self::activate();
-            try {
-                return $f(...$args);
-            } finally {
-                // Set only while stream waits are pending: a callback may have fclose()d a watched stream, and it must be
-                // swept before the loop selects on it again.
-                if (self::$afterCallback !== null) {
-                    (self::$afterCallback)();
-                }
-            }
+            return $f(...$args);
         };
     }
 
@@ -107,7 +104,17 @@ final class ActivatingLoop implements LoopInterface
     public function run(): void
     {
         try {
-            $this->inner->run();
+            while (true) {
+                try {
+                    $this->inner->run();
+                    return;
+                } catch (\TypeError | \ValueError $e) {
+                    // stream_select() met a stream closed in the same tick: sweep, then run the loop again.
+                    if (self::$recover === null || !(self::$recover)($e)) {
+                        throw $e;
+                    }
+                }
+            }
         } finally {
             self::activate();
         }

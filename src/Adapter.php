@@ -116,8 +116,8 @@ final class Adapter implements \async\Adapter
                 };
                 $dir === 'read' ? Loop::addReadStream($resource, $fire) : Loop::addWriteStream($resource, $fire);
                 // A local fclose() is not an event stream_select can report: re-check while stream waits are pending.
-                $this->sweeper ??= Loop::addPeriodicTimer(0.01, $this->sweep(...));
-                ActivatingLoop::$afterCallback = $this->sweep(...);
+                $this->sweeper ??= Loop::addPeriodicTimer(0.02, $this->sweep(...));
+                ActivatingLoop::$recover = $this->recoverFromDeadStream(...);
             }
             $this->streams[$dir][$key][1][$id] = static fn() => $settle(true, null);
 
@@ -146,8 +146,18 @@ final class Adapter implements \async\Adapter
         if ($this->sweeper !== null && ($this->streams['read'] ?? []) === [] && ($this->streams['write'] ?? []) === []) {
             Loop::cancelTimer($this->sweeper);
             $this->sweeper = null;
-            ActivatingLoop::$afterCallback = null;
+            ActivatingLoop::$recover = null;
         }
+    }
+
+    /** stream_select() met a closed resource: remove the dead watchers (so the loop's arrays are clean) and wake. */
+    private function recoverFromDeadStream(\Throwable $e): bool
+    {
+        if (!\str_contains($e->getMessage(), 'not a valid stream resource') && !\str_contains($e->getMessage(), 'No stream arrays')) {
+            return false;
+        }
+        $this->sweep();
+        return true;
     }
 
     /** Wake the waiters of every watched stream that was closed locally; they return normally. */
