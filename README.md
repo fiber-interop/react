@@ -81,6 +81,17 @@ outer `run()`) would let the adapter drop backtrace inspection and make `Loop::s
 - No cancellation of `go()` tasks beyond what `React\Promise` `cancel()` gives.
 - Foreign fibers started inside a loop callback cannot wait (see above).
 
+## Stress tier
+
+The api's stress tier (`vendor/fiber-interop/api/bin/fiber-interop-stress tests/bootstrap.php`) passes
+5 of 6 tests here. The failing one, `FrameMembershipTest::testForeignFiberChildIsNeverOrphaned`,
+starts a plain `new Fiber` inside a task and calls `async\sleep()` from it while the React loop is
+running. React's loop cannot be re-entered from inside a callback, so this adapter throws a clear
+`LogicException` ("cannot wait in place from a fiber nobody owns while the React loop is running")
+rather than hang. That is the same limitation as the in-place rule above, seen from the other side,
+and the same ask to React: a re-entrant "run until settled". The other five tests pass at 200
+iterations.
+
 ## Tests
 
 ```
