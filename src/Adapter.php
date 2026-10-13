@@ -27,10 +27,21 @@ final class Adapter implements \async\Adapter
     private array $streams = ['read' => [], 'write' => []];
     private int $waiterId = 0;
 
+    public function __construct()
+    {
+        // Idempotent: the decorating loop activates the scope before every callback the loop runs.
+        if (!Loop::get() instanceof ActivatingLoop) {
+            Loop::set(new ActivatingLoop(Loop::get()));
+        }
+    }
+
     public function go(\Closure $f): object
     {
         $scope = \Scope::getCurrent();
-        return async(static fn(mixed ...$args): mixed => $scope->run($f, ...$args))();
+        return async(static fn(mixed ...$args): mixed => $scope->run(static function () use ($f, $args): mixed {
+            ActivatingLoop::activate(); // task start
+            return $f(...$args);
+        }))();
     }
 
     /**
@@ -185,7 +196,11 @@ final class Adapter implements \async\Adapter
         }
 
         if ($context === 'react') {
-            return await($deferred->promise());
+            try {
+                return await($deferred->promise());
+            } finally {
+                ActivatingLoop::activate(); // api resume (also on return to {main})
+            }
         }
 
         // Foreign fiber: React\Async\await() would suspend it, so run the loop here until settled.
@@ -196,6 +211,7 @@ final class Adapter implements \async\Adapter
         );
         while ($result === null) {
             Loop::run();
+            ActivatingLoop::activate();
             if ($result === null) {
                 throw new \LogicException('Deadlock: waiting with nothing scheduled');
             }

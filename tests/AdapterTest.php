@@ -181,4 +181,44 @@ final class AdapterTest extends TestCase
             $this->assertInstanceOf(\RuntimeException::class, $seen);
         });
     }
+
+    public function testDecoratingLoopInstalledOnceAndSwapsOnlyOnScopeChange(): void
+    {
+        \async\run(function () {
+            $this->assertInstanceOf(\FiberInterop\React\ActivatingLoop::class, Loop::get());
+            new \FiberInterop\React\Adapter(); // idempotent: no double wrap
+            $inner = (new \ReflectionProperty(\FiberInterop\React\ActivatingLoop::class, 'inner'))->getValue(Loop::get());
+            $this->assertNotInstanceOf(\FiberInterop\React\ActivatingLoop::class, $inner);
+
+            // Same scope all along: $_GET set here is still here after a timer callback and a sleep.
+            $_GET = ['k' => 'same'];
+            $seen = null;
+            Loop::addTimer(0.001, function () use (&$seen) { $seen = $_GET['k'] ?? null; });
+            sleep(0.01);
+            $this->assertSame('same', $seen);
+            $this->assertSame('same', $_GET['k']);
+        });
+    }
+
+    public function testActivatesOnTimerCallbackApiResumeAndReturnToMain(): void
+    {
+        $root = $_GET;
+        $timerSaw = null;
+        \async\run(function () use (&$timerSaw) {
+            $scope = new \Scope();
+            $scope->run(function () use (&$timerSaw) {
+                $_GET = ['req' => 'inner'];
+                // Timer registered in the inner scope but fired by the loop while another scope may be active.
+                Loop::addTimer(0.005, function () use (&$timerSaw) { $timerSaw = $_GET['req'] ?? null; });
+            });
+            $other = (new \Scope())->run(fn() => go(function () {
+                $_GET = ['req' => 'other'];
+                sleep(0.02);
+                $this->assertSame('other', $_GET['req'], 'api resume');
+            }));
+            await($other);
+        });
+        $this->assertSame($root, $_GET, 'return to main');
+        $this->assertNotSame('other', $timerSaw);
+    }
 }

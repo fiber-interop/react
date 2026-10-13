@@ -32,9 +32,36 @@ does not own. The adapter instead runs `Loop::run()` inside that fiber until the
 (`Loop::stop()` from the settle callback). If the foreign fiber was started from inside a running loop callback the
 loop cannot be re-entered; a `LogicException` is thrown.
 
+## Scope state
+
+The adapter keeps the per-scope superglobals of `fiber-interop/scope` correct by calling
+`\fiber_interop\scope\activate()` (lazy; swaps only on a real scope change) wherever control reaches user code:
+
+- **Decorating loop.** The adapter constructor installs `FiberInterop\React\ActivatingLoop` with `Loop::set()` (once; never
+  double-wrapped). It wraps every callback given to `addTimer`, `addPeriodicTimer`, `addReadStream`, `addWriteStream`,
+  `addSignal` and `futureTick` as `activate(); $cb(...)`, and `run()` activates after the inner `run()` returns.
+  Watchers registered before the adapter was created are not wrapped.
+- **Adapter waits.** `activate()` runs at the start of every `go()` task, after each suspension returns in the resumed
+  fiber (`sleep`, `await`, `readable`, `writable`), and after an in-place `Loop::run()` returns.
+
+Probes (`php probes/scope-*.php`; exit 0 and print `ok`, or print the mismatch and exit 1):
+
+- `scope-api.php` passes: everything goes through the adapter's waits.
+- `scope-raw-fiber.php` passes: a plain `Fiber` resumed by its creator sees the creator's `$_GET` (polyfill fallback).
+- `scope-loop.php` **fails, by design of React**: written with `React\Async\async` + `React\Async\await` + `Loop::addTimer` only.
+  After the timer fires, `await()` resumes the fiber with `$fiber->resume()` from a scheduler tick, and nothing runs
+  in the target fiber between that resume and the user's next line, so no hook can activate the fiber's scope; the code
+  reads the active (root) scope's `$_GET` (`null` for `req` in the probe) instead of its own.
+  Observed output: `a after sleep 1 saw null`, `a after sleep 2 saw null`, `b after sleep 1 saw null`, `b after sleep 2 saw null`.
+
+**Precise ask to ReactPHP:** a resume hook (a callback run in the target fiber, or around `$fiber->resume()`, in
+`react/async` `SimpleFiber`/`await()`), or routing `await()` through a suspension object that user-visible code returns
+from, as Revolt's `Suspension::suspend()` does. Until then, code that waits with raw `React\Async\await()` and then
+reads superglobals may see the previously active scope's values; waiting through `async\sleep()`/`async\await()` is safe.
+
 ## What the ReactPHP maintainers would own
 
-`src/Adapter.php` (about 200 lines) and `src/register.php`. No React internals are used besides `FiberMap`'s
+`src/Adapter.php` (about 200 lines), `src/ActivatingLoop.php` and `src/register.php`. No React internals are used besides `FiberMap`'s
 location, used to recognise fibers made by `async()`.
 
 ## The ask to React

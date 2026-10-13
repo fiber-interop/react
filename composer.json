@@ -5,8 +5,8 @@
     "license": "MIT",
     "require": {
         "php": "^8.1",
-        "fiber-interop/api": "^0.1",
-        "fiber-interop/scope": "^0.1",
+        "fiber-interop/api": "^0.2",
+        "fiber-interop/scope": "^0.2",
         "react/event-loop": "^1.5",
         "react/promise": "^3",
         "react/async": "^4"
