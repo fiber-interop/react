@@ -95,6 +95,8 @@ final class Adapter implements \async\Adapter
      *
      * @param 'read'|'write' $dir
      */
+    private ?\React\EventLoop\TimerInterface $sweeper = null;
+
     private function waitStream(string $dir, mixed $resource, float $timeout): void
     {
         $this->wait(function (\Closure $settle) use ($dir, $resource): \Closure {
@@ -103,6 +105,9 @@ final class Adapter implements \async\Adapter
             if (!isset($this->streams[$dir][$key])) {
                 $this->streams[$dir][$key] = [$resource, []];
                 $fire = function () use ($dir, $key): void {
+                    if (!isset($this->streams[$dir][$key])) {
+                        return;
+                    }
                     $waiters = $this->streams[$dir][$key][1];
                     $this->unlisten($dir, $key);
                     foreach ($waiters as $wake) {
@@ -110,6 +115,9 @@ final class Adapter implements \async\Adapter
                     }
                 };
                 $dir === 'read' ? Loop::addReadStream($resource, $fire) : Loop::addWriteStream($resource, $fire);
+                // A local fclose() is not an event stream_select can report: re-check while stream waits are pending.
+                $this->sweeper ??= Loop::addPeriodicTimer(0.01, $this->sweep(...));
+                ActivatingLoop::$afterCallback = $this->sweep(...);
             }
             $this->streams[$dir][$key][1][$id] = static fn() => $settle(true, null);
 
@@ -128,7 +136,33 @@ final class Adapter implements \async\Adapter
     {
         $resource = $this->streams[$dir][$key][0];
         unset($this->streams[$dir][$key]);
-        $dir === 'read' ? Loop::removeReadStream($resource) : Loop::removeWriteStream($resource);
+        try {
+            $dir === 'read' ? Loop::removeReadStream($resource) : Loop::removeWriteStream($resource);
+        } catch (\Throwable $e) {
+            if (\is_resource($resource)) {
+                throw $e; // only a vanished fd may fail to be removed
+            }
+        }
+        if ($this->sweeper !== null && ($this->streams['read'] ?? []) === [] && ($this->streams['write'] ?? []) === []) {
+            Loop::cancelTimer($this->sweeper);
+            $this->sweeper = null;
+            ActivatingLoop::$afterCallback = null;
+        }
+    }
+
+    /** Wake the waiters of every watched stream that was closed locally; they return normally. */
+    private function sweep(): void
+    {
+        foreach (['read', 'write'] as $dir) {
+            foreach ($this->streams[$dir] ?? [] as $key => [$resource, $waiters]) {
+                if (!\is_resource($resource)) {
+                    $this->unlisten($dir, $key); // removed before the loop selects on it again
+                    foreach ($waiters as $wake) {
+                        $wake();
+                    }
+                }
+            }
+        }
     }
 
     /**

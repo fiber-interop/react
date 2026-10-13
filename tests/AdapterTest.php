@@ -221,4 +221,26 @@ final class AdapterTest extends TestCase
         $this->assertSame($root, $_GET, 'return to main');
         $this->assertNotSame('other', $timerSaw);
     }
+    public function testLocalCloseUnblocksWaitersNormally(): void
+    {
+        \async\run(function () {
+            [$a, $b] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+            $woke = [];
+            $start = microtime(true);
+            $w1 = go(function () use ($a, &$woke, $start) {
+                readable($a, 5.0);
+                $woke[] = microtime(true) - $start;
+            });
+            $w2 = go(function () use ($a, &$woke, $start) {
+                readable($a, 5.0);
+                $woke[] = microtime(true) - $start;
+            });
+            sleep(0.02);
+            fclose($a);
+            await_all([$w1, $w2]);
+            $this->assertCount(2, $woke);
+            $this->assertLessThan(0.1, max($woke));
+            fclose($b);
+        });
+    }
 }

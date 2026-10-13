@@ -18,6 +18,9 @@ final class ActivatingLoop implements LoopInterface
 
     public function __construct(private readonly LoopInterface $inner) {}
 
+    /** @internal */
+    public static ?\Closure $afterCallback = null;
+
     public static function activate(): void
     {
         if (\function_exists('fiber_interop\\scope\\activate')) {
@@ -29,7 +32,15 @@ final class ActivatingLoop implements LoopInterface
     {
         return static function (mixed ...$args) use ($f): mixed {
             self::activate();
-            return $f(...$args);
+            try {
+                return $f(...$args);
+            } finally {
+                // Set only while stream waits are pending: a callback may have fclose()d a watched stream, and it must be
+                // swept before the loop selects on it again.
+                if (self::$afterCallback !== null) {
+                    (self::$afterCallback)();
+                }
+            }
         };
     }
 
