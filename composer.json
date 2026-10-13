@@ -6,6 +6,7 @@
     "require": {
         "php": "^8.1",
         "fiber-interop/api": "*",
+        "fiber-interop/scope": "*",
         "react/event-loop": "^1.5",
         "react/promise": "^3",
         "react/async": "^4"

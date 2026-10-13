@@ -1,6 +1,6 @@
 # fiber-interop/react
 
-Native ReactPHP adapter for [`fiber-interop/api`](../api): `go`, `await`, `sleep`, `readable`, `writable` on
+Native ReactPHP adapter for [`fiber-interop/api`](../api): `run`, `go`, `service`, `await`, `sleep`, `readable`, `writable` (all called inside `run()`) on
 `react/event-loop` ^1.5, `react/promise` ^3 and `react/async` ^4 (PHP 8.1+).
 
 ```
@@ -13,6 +13,7 @@ Requiring the package registers the adapter (`src/register.php`); nothing else t
 
 | api | React |
 | --- | --- |
+| `service($f)` | same as `go()`. React's `await()` from `{main}` calls `Loop::stop()` the moment the awaited promise settles, so a sleeping service (pending timer or stream listener) never keeps the outermost `run()` alive; no unreference is needed. Leftover watchers stay registered and fire if the loop runs again. |
 | `go($f)` | `React\Async\async($f)()`; returns a real `React\Promise\PromiseInterface` (scope captured at call time) |
 | `await($o)` | `React\Async\await()` in `{main}` or in an `async()` fiber; promises and plain then-ables accepted |
 | `sleep($s)` | `Loop::addTimer()` + suspension |

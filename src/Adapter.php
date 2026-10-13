@@ -33,6 +33,17 @@ final class Adapter implements \async\Adapter
         return async(static fn(mixed ...$args): mixed => $scope->run($f, ...$args))();
     }
 
+    /**
+     * React's await() from {main} stops the loop as soon as the awaited promise settles (Loop::stop()), whether
+     * or not timers or streams are still registered, so a sleeping service never keeps the outermost run()'s
+     * wait alive and no unreference is needed. A service is therefore go(); its leftover watchers stay in the
+     * loop and fire if the loop is run again.
+     */
+    public function service(\Closure $f): object
+    {
+        return $this->go($f);
+    }
+
     public function canAwait(object $o): bool
     {
         return $o instanceof PromiseInterface || \method_exists($o, 'then');
