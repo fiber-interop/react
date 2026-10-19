@@ -9,14 +9,14 @@ use PHPUnit\Framework\TestCase;
 use React\EventLoop\Loop;
 use React\Promise\Deferred;
 
-use function async\{await, await_all, go, readable, run, sleep};
+use function fiber\{await, await_all, go, readable, run, sleep};
 use function React\Async\async;
 
 final class AdapterTest extends TestCase
 {
     public function testGoReturnsReactPromise(): void
     {
-        \async\run(function () {
+        \fiber\run(function () {
             $p = go(fn() => 42);
             $this->assertInstanceOf(\React\Promise\PromiseInterface::class, $p);
             $this->assertSame(42, await($p));
@@ -25,7 +25,7 @@ final class AdapterTest extends TestCase
 
     public function testAwaitPromiseResolveAndReject(): void
     {
-        \async\run(function () {
+        \fiber\run(function () {
             $d = new Deferred();
             Loop::addTimer(0.01, fn() => $d->resolve('ok'));
             $this->assertSame('ok', await($d->promise()));
@@ -44,8 +44,8 @@ final class AdapterTest extends TestCase
 
     public function testNonThrowableRejectionIsWrapped(): void
     {
-        \async\run(function () {
-            $this->expectException(\async\RejectedException::class);
+        \fiber\run(function () {
+            $this->expectException(\fiber\RejectedException::class);
             await(new class {
                 public function then(callable $ok, callable $fail): void
                 {
@@ -57,13 +57,13 @@ final class AdapterTest extends TestCase
 
     public function testTimeoutLeavesPromiseAloneAndIgnoresLateResult(): void
     {
-        \async\run(function () {
+        \fiber\run(function () {
             $d = new Deferred();
             Loop::addTimer(0.05, fn() => $d->resolve('late'));
             try {
                 await($d->promise(), 0.01);
                 $this->fail('expected timeout');
-            } catch (\async\TimeoutException) {
+            } catch (\fiber\TimeoutException) {
             }
             sleep(0.06);
             $this->assertSame('late', await($d->promise()));
@@ -72,7 +72,7 @@ final class AdapterTest extends TestCase
 
     public function testAwaitInsideReactAsyncFiber(): void
     {
-        \async\run(function () {
+        \fiber\run(function () {
             $p = async(function () {
                 sleep(0.01);
                 return await(go(fn() => 'inner')) . '!';
@@ -83,7 +83,7 @@ final class AdapterTest extends TestCase
 
     public function testGoTaskAwaitedWithReactAwait(): void
     {
-        \async\run(function () {
+        \fiber\run(function () {
             $this->assertSame(7, \React\Async\await(go(function () {
                 sleep(0.01);
                 return 7;
@@ -93,7 +93,7 @@ final class AdapterTest extends TestCase
 
     public function testTwoReadableWaitersOnOneStream(): void
     {
-        \async\run(function () {
+        \fiber\run(function () {
             [$r, $w] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
             stream_set_blocking($r, false);
             $woke = [];
@@ -114,12 +114,12 @@ final class AdapterTest extends TestCase
 
     public function testReadableTimeoutCancelsWaiter(): void
     {
-        \async\run(function () {
+        \fiber\run(function () {
             [$r, $w] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
             try {
                 readable($r, 0.01);
                 $this->fail('expected timeout');
-            } catch (\async\TimeoutException) {
+            } catch (\fiber\TimeoutException) {
             }
             // The listener is gone: a later write must not leave a watcher behind that keeps the loop alive.
             fwrite($w, 'x');
@@ -131,7 +131,7 @@ final class AdapterTest extends TestCase
     #[RunInSeparateProcess]
     public function testInPlaceFromForeignFiber(): void
     {
-        \async\run(function () {
+        \fiber\run(function () {
             $result = null;
             $fiber = new \Fiber(function () use (&$result) {
                 sleep(0.01);
@@ -146,7 +146,7 @@ final class AdapterTest extends TestCase
     #[RunInSeparateProcess]
     public function testForeignFiberStartedInsideLoopCallbackThrows(): void
     {
-        \async\run(function () {
+        \fiber\run(function () {
             $error = null;
             $d = new Deferred();
             Loop::addTimer(0.001, function () use (&$error, $d) {
@@ -167,11 +167,11 @@ final class AdapterTest extends TestCase
     #[RunInSeparateProcess]
     public function testUnhandledRejectionReachesHandler(): void
     {
-        \async\run(function () {
+        \fiber\run(function () {
             $seen = null;
             $previous = \React\Promise\set_rejection_handler(function (\Throwable $e) use (&$seen) { $seen = $e; });
             try {
-                \async\service(fn() => throw new \RuntimeException('nobody awaits'));
+                \fiber\service(fn() => throw new \RuntimeException('nobody awaits'));
                 gc_collect_cycles();
                 sleep(0.01);
                 gc_collect_cycles();
@@ -184,7 +184,7 @@ final class AdapterTest extends TestCase
 
     public function testDecoratingLoopInstalledOnceAndSwapsOnlyOnScopeChange(): void
     {
-        \async\run(function () {
+        \fiber\run(function () {
             $this->assertInstanceOf(\FiberInterop\React\ActivatingLoop::class, Loop::get());
             new \FiberInterop\React\Adapter(); // idempotent: no double wrap
             $inner = (new \ReflectionProperty(\FiberInterop\React\ActivatingLoop::class, 'inner'))->getValue(Loop::get());
@@ -204,7 +204,7 @@ final class AdapterTest extends TestCase
     {
         $root = $_GET;
         $timerSaw = null;
-        \async\run(function () use (&$timerSaw) {
+        \fiber\run(function () use (&$timerSaw) {
             $scope = new \Scope();
             $scope->run(function () use (&$timerSaw) {
                 $_GET = ['req' => 'inner'];
@@ -235,7 +235,7 @@ final class AdapterTest extends TestCase
 
     public function testLocalCloseUnblocksWaitersNormally(): void
     {
-        \async\run(function () {
+        \fiber\run(function () {
             [$a, $b] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
             $woke = [];
             $start = microtime(true);
@@ -260,24 +260,24 @@ final class AdapterTest extends TestCase
     public function testAwaitResolvedOnlyByService(): void
     {
         $t = \microtime(true);
-        $result = \async\run(function () {
-            $timer = new \async\Deferred();
-            \async\service(function () use ($timer) {
-                \async\sleep(0.02);
+        $result = \fiber\run(function () {
+            $timer = new \fiber\Deferred();
+            \fiber\service(function () use ($timer) {
+                \fiber\sleep(0.02);
                 $timer->settle(true, 'slept');
-                \async\sleep(30); // a sleeping service must not keep run() alive
+                \fiber\sleep(30); // a sleeping service must not keep run() alive
             });
             [$a, $b] = \stream_socket_pair(\STREAM_PF_UNIX, \STREAM_SOCK_STREAM, \STREAM_IPPROTO_IP);
-            $io = new \async\Deferred();
-            \async\service(function () use ($a, $io) {
-                \async\readable($a, 5.0);
+            $io = new \fiber\Deferred();
+            \fiber\service(function () use ($a, $io) {
+                \fiber\readable($a, 5.0);
                 $io->settle(true, \fread($a, 10));
             });
-            \async\service(function () use ($b) {
-                \async\sleep(0.02);
+            \fiber\service(function () use ($b) {
+                \fiber\sleep(0.02);
                 \fwrite($b, 'ping');
             });
-            return [\async\await($timer), \async\await($io)];
+            return [\fiber\await($timer), \fiber\await($io)];
         });
         $this->assertSame(['slept', 'ping'], $result);
         $this->assertLessThan(5.0, \microtime(true) - $t);

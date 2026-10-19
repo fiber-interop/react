@@ -1,8 +1,8 @@
 <?php
-// Portable probe: per-scope $_GET survives async\sleep() inside async\run().
+// Portable probe: per-scope $_GET survives fiber\sleep() inside fiber\run().
 require __DIR__ . '/../vendor/autoload.php';
 
-use function async\{await_all, go, run, sleep};
+use function fiber\{await_all, go, run, sleep};
 
 $root = $_GET;
 $bad = [];

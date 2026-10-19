@@ -2,7 +2,7 @@
 // Portable probe: a plain Fiber resumed by its creator sees the creator's $_GET (most-recently-current fallback).
 require __DIR__ . '/../vendor/autoload.php';
 
-use function async\run;
+use function fiber\run;
 
 $bad = [];
 run(function () use (&$bad) {

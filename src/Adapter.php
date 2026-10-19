@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace FiberInterop\React;
 
-use async\RejectedException;
-use async\Timeout;
+use fiber\RejectedException;
+use fiber\Timeout;
 use React\Async\FiberMap;
 use React\EventLoop\Loop;
 use React\Promise\Deferred;
@@ -21,7 +21,7 @@ use function React\Async\await;
  *  - {main} or a fiber created by React\Async\async() (including every go() task): React\Async\await().
  *  - any other fiber (one nobody's loop owns): the loop is run in place, from inside that fiber.
  */
-final class Adapter implements \async\Adapter
+final class Adapter implements \fiber\Adapter
 {
     /** @var array{read: array<int, array{0: resource, 1: array<int, \Closure>}>, write: array<int, array{0: resource, 1: array<int, \Closure>}>} */
     private array $streams = ['read' => [], 'write' => []];

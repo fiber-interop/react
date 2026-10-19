@@ -18,8 +18,8 @@ Requiring the package registers the adapter (`src/register.php`); nothing else t
 | `await($o)` | `React\Async\await()` in `{main}` or in an `async()` fiber; promises and plain then-ables accepted |
 | `sleep($s)` | `Loop::addTimer()` + suspension |
 | `readable()` / `writable()` | `Loop::addReadStream()` / `addWriteStream()`, one listener per stream shared by all waiters |
-| timeout | `Loop::addTimer()` racing the awaited thing; `async\Timeout`, the awaited promise is left alone, late result ignored |
-| non-Throwable rejection | `async\RejectedException` (plain then-ables; React v3 itself rejects with `TypeError`) |
+| timeout | `Loop::addTimer()` racing the awaited thing; `fiber\Timeout`, the awaited promise is left alone, late result ignored |
+| non-Throwable rejection | `fiber\RejectedException` (plain then-ables; React v3 itself rejects with `TypeError`) |
 | unawaited failure | React's own unhandled-rejection reporting (`React\Promise\set_rejection_handler`) |
 
 `await()` decides how to wait by walking `debug_backtrace()` (it spans fibers): a fiber entered through
@@ -57,7 +57,7 @@ Probes (`php probes/scope-*.php`; exit 0 and print `ok`, or print the mismatch a
 **Precise ask to ReactPHP:** a resume hook (a callback run in the target fiber, or around `$fiber->resume()`, in
 `react/async` `SimpleFiber`/`await()`), or routing `await()` through a suspension object that user-visible code returns
 from, as Revolt's `Suspension::suspend()` does. Until then, code that waits with raw `React\Async\await()` and then
-reads superglobals may see the previously active scope's values; waiting through `async\sleep()`/`async\await()` is safe.
+reads superglobals may see the previously active scope's values; waiting through `fiber\sleep()`/`fiber\await()` is safe.
 
 ## What the ReactPHP maintainers would own
 
@@ -86,7 +86,7 @@ outer `run()`) would let the adapter drop backtrace inspection and make `Loop::s
 
 The api's stress tier (`vendor/fiber-interop/api/bin/fiber-interop-stress tests/bootstrap.php`) passes
 5 of 6 tests here. The failing one, `FrameMembershipTest::testForeignFiberChildIsNeverOrphaned`,
-starts a plain `new Fiber` inside a task and calls `async\sleep()` from it while the React loop is
+starts a plain `new Fiber` inside a task and calls `fiber\sleep()` from it while the React loop is
 running. React's loop cannot be re-entered from inside a callback, so this adapter throws a clear
 `LogicException` ("cannot wait in place from a fiber nobody owns while the React loop is running")
 rather than hang. That is the same limitation as the in-place rule above, seen from the other side,
