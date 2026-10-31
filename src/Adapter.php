@@ -26,22 +26,61 @@ final class Adapter implements \fiber\Adapter
     /** @var array{read: array<int, array{0: resource, 1: array<int, \Closure>}>, write: array<int, array{0: resource, 1: array<int, \Closure>}>} */
     private array $streams = ['read' => [], 'write' => []];
     private int $waiterId = 0;
+    /** @var \WeakMap<\Fiber, PromiseInterface> fiber -> the handle go() returned for the task it runs */
+    private \WeakMap $tasks;
+    /** @var \WeakMap<PromiseInterface, \Closure(bool, mixed): void> task handle -> settle closure of its current wait */
+    private \WeakMap $waits;
 
     public function __construct()
     {
+        $this->tasks = new \WeakMap();
+        $this->waits = new \WeakMap();
         // Idempotent: the decorating loop activates the scope before every callback the loop runs.
         if (!Loop::get() instanceof ActivatingLoop) {
             Loop::set(new ActivatingLoop(Loop::get()));
         }
     }
 
+    /**
+     * async() starts the fiber before it returns its promise, so the handle is a Deferred's promise made
+     * first and settled by async()'s: current() knows it from the task's first line. Cancelling the handle
+     * (React's promise cancel()) cancels async()'s promise.
+     */
     public function go(\Closure $f): object
     {
         $scope = \Scope::getCurrent();
-        return async(static fn(mixed ...$args): mixed => $scope->run(static function () use ($f, $args): mixed {
-            ActivatingLoop::activate(); // task start
-            return $f(...$args);
-        }))();
+        $inner = null;
+        $deferred = new Deferred(static function () use (&$inner): void {
+            $inner?->cancel();
+        });
+        $handle = $deferred->promise();
+        $tasks = $this->tasks;
+        $inner = async(static function (mixed ...$args) use ($scope, $f, $tasks, $handle): mixed {
+            $tasks[\Fiber::getCurrent()] = $handle;
+            return $scope->run(static function () use ($f, $args): mixed {
+                ActivatingLoop::activate(); // task start
+                return $f(...$args);
+            });
+        })();
+        $inner->then($deferred->resolve(...), $deferred->reject(...));
+        return $handle;
+    }
+
+    /** The handle go() or service() returned for the running task, null outside one. */
+    public function current(): ?object
+    {
+        $fiber = \Fiber::getCurrent();
+        return $fiber !== null ? $this->tasks[$fiber] ?? null : null;
+    }
+
+    /**
+     * Fail the wait $task is suspended in with $reason: its settle closure cancels the timer, removes the
+     * stream waiter, ignores the awaited promise's later outcome and rejects the wait's Deferred, so
+     * React\Async\await() throws $reason inside the task. A settled wait ignores every later wake-up.
+     */
+    public function cancel(object $task, \fiber\CancelledException $reason): void
+    {
+        ($this->waits[$task] ?? null)?->__invoke(false, $reason);
     }
 
     /**
@@ -240,9 +279,14 @@ final class Adapter implements \fiber\Adapter
         }
 
         if ($context === 'react') {
+            $task = $this->current();
+            $task !== null && $this->waits[$task] = $scoped;
             try {
                 return await($deferred->promise());
             } finally {
+                if ($task !== null) {
+                    unset($this->waits[$task]);
+                }
                 ActivatingLoop::activate(); // api resume (also on return to {main})
             }
         }

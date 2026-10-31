@@ -1,6 +1,6 @@
 # fiber-interop/react
 
-Native ReactPHP adapter for [`fiber-interop/api`](../api): `run`, `go`, `service`, `await`, `sleep`, `readable`, `writable` (all called inside `run()`) on
+Native ReactPHP adapter for [`fiber-interop/api`](../api): `run`, `go`, `service`, `await`, `sleep`, `readable`, `writable`, `current`, `cancel` (all called inside `run()`) on
 `react/event-loop` ^1.5, `react/promise` ^3 and `react/async` ^4 (PHP 8.1+).
 
 ```
@@ -14,7 +14,9 @@ Requiring the package registers the adapter (`src/register.php`); nothing else t
 | api | React |
 | --- | --- |
 | `service($f)` | same as `go()`. React's `await()` from `{main}` calls `Loop::stop()` the moment the awaited promise settles, so a sleeping service (pending timer or stream listener) never keeps the outermost `run()` alive; no unreference is needed. Leftover watchers stay registered and fire if the loop runs again. |
-| `go($f)` | `React\Async\async($f)()`; returns a real `React\Promise\PromiseInterface` (scope captured at call time) |
+| `go($f)` | `React\Async\async($f)()`; returns a real `React\Promise\PromiseInterface` (scope captured at call time). `async()` starts the fiber before it returns its promise, so the handle is a `Deferred`'s promise made first and settled by `async()`'s; cancelling it cancels `async()`'s promise |
+| `current()` | the handle of the task the current fiber runs, from the task's first line |
+| `cancel($task, $reason)` | the task's current wait is settled with `$reason`: its timer is cancelled (`Loop::cancelTimer()`), its stream waiter removed (`removeReadStream()`/`removeWriteStream()` when it was the last), the awaited promise's later outcome ignored, and the wait's `Deferred` rejected, so `React\Async\await()` throws `$reason` in the task. A settled wait ignores later wake-ups. The awaited promise itself is not cancelled |
 | `await($o)` | `React\Async\await()` in `{main}` or in an `async()` fiber; promises and plain then-ables accepted |
 | `sleep($s)` | `Loop::addTimer()` + suspension |
 | `readable()` / `writable()` | `Loop::addReadStream()` / `addWriteStream()`, one listener per stream shared by all waiters |
@@ -61,7 +63,7 @@ reads superglobals may see the previously active scope's values; waiting through
 
 ## What the ReactPHP maintainers would own
 
-`src/Adapter.php` (about 200 lines), `src/ActivatingLoop.php` and `src/register.php`. No React internals are used besides `FiberMap`'s
+`src/Adapter.php` (about 300 lines), `src/ActivatingLoop.php` and `src/register.php`. No React internals are used besides `FiberMap`'s
 location, used to recognise fibers made by `async()`.
 
 ## The ask to React
@@ -79,7 +81,7 @@ outer `run()`) would let the adapter drop backtrace inspection and make `Loop::s
   Mix the two styles in one process only if foreign fibers are not used after a `{main}` await (the tests for the
   in-place path run in separate processes for this reason).
 - A local `fclose()` of a stream that fibers wait on wakes the waiters within ~20 ms (the next operation on the closed resource fails). A periodic timer (20 ms) runs `is_resource()` on the watched streams; it exists only while stream waits are pending. If the stream is closed inside a callback and `StreamSelectLoop` selects before the timer fires, `stream_select()` fails with `TypeError` ("supplied resource is not a valid stream resource", or `ValueError` "No stream arrays were passed" when it was the only stream); `ActivatingLoop::run()` catches exactly that, removes the dead watchers via `removeReadStream()`/`removeWriteStream()` (which still key by `(int)$stream` after close), wakes the waiters and runs the loop again. No work is done per callback.
-- No cancellation of `go()` tasks beyond what `React\Promise` `cancel()` gives.
+- `cancel()` does not unsubscribe from an awaited promise (React promises have no unsubscribe); the wait ignores its later outcome.
 - Foreign fibers started inside a loop callback cannot wait (see above).
 
 ## Stress tier

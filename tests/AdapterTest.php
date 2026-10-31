@@ -282,4 +282,34 @@ final class AdapterTest extends TestCase
         $this->assertSame(['slept', 'ping'], $result);
         $this->assertLessThan(5.0, \microtime(true) - $t);
     }
+
+    public function testCancelThrowsReasonOnceAndDropsTheWatchers(): void
+    {
+        \fiber\run(function () {
+            [$r, $w] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+            stream_set_blocking($r, false);
+            $log = [];
+            $wait = function (string $n, \Closure $op) use (&$log) {
+                try {
+                    $op();
+                    $log[] = "$n returned";
+                } catch (\fiber\CancelledException $e) {
+                    $log[] = "$n: " . $e->getMessage();
+                }
+            };
+            $sleeper = go(fn() => $wait('sleeper', fn() => sleep(0.02)));
+            $reader = go(fn() => $wait('reader', fn() => readable($r)));
+            $other = go(fn() => $wait('other', fn() => readable($r)));
+            $awaiter = go(fn() => $wait('awaiter', fn() => await(go(fn() => sleep(0.02)))));
+            sleep(0.005);
+            \fiber\cancel($sleeper, new \fiber\Cancelled('s'));
+            \fiber\cancel($reader, new \fiber\Cancelled('r'));
+            \fiber\cancel($awaiter, new \fiber\Cancelled('a'));
+            fwrite($w, 'x');
+            await_all([$sleeper, $reader, $other, $awaiter]);
+            sleep(0.04); // past the cancelled timers: a late wake-up must not resume a task again
+            sort($log);
+            $this->assertSame(['awaiter: a', 'other returned', 'reader: r', 'sleeper: s'], $log);
+        });
+    }
 }
